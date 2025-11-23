@@ -1,4 +1,8 @@
 import logging
+import json
+import os
+from datetime import datetime
+from pathlib import Path
 
 from dotenv import load_dotenv
 from livekit.agents import (
@@ -12,8 +16,8 @@ from livekit.agents import (
     cli,
     metrics,
     tokenize,
-    # function_tool,
-    # RunContext
+    function_tool,
+    RunContext
 )
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
@@ -22,32 +26,117 @@ logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
+# Path to wellness log file
+WELLNESS_LOG_PATH = Path(__file__).parent.parent / "wellness_log.json"
+
+
+# Helper functions for JSON persistence
+def load_wellness_log():
+    """Load wellness log from JSON file."""
+    if WELLNESS_LOG_PATH.exists():
+        try:
+            with open(WELLNESS_LOG_PATH, 'r') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            logger.warning("Invalid JSON in wellness log, starting fresh")
+            return {"check_ins": []}
+    return {"check_ins": []}
+
+
+def save_wellness_log(data):
+    """Save wellness log to JSON file."""
+    with open(WELLNESS_LOG_PATH, 'w') as f:
+        json.dump(data, f, indent=2)
+
 
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(
-            instructions="""You are a helpful voice AI assistant. The user is interacting with you via voice, even if you perceive the conversation as text.
-            You eagerly assist users with their questions by providing information from your extensive knowledge.
-            Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
-            You are curious, friendly, and have a sense of humor.""",
+            instructions="""You are a supportive health and wellness voice companion. The user is interacting with you via voice.
+            
+            Your role is to:
+            1. Conduct friendly, supportive daily check-ins about mood, energy, and wellness
+            2. Ask about their intentions and objectives for the day (1-3 simple goals)
+            3. Offer realistic, grounded, and actionable advice - keep it simple and practical
+            4. Avoid any medical diagnosis or clinical claims - you are a supportive companion, not a clinician
+            5. Close each check-in with a brief recap of mood and objectives, and ask for confirmation
+            
+            Your conversation style:
+            - Warm, empathetic, and non-judgmental
+            - Concise and to the point - keep responses short
+            - No complex formatting, emojis, or special symbols
+            - Encourage small, achievable steps rather than overwhelming goals
+            
+            When starting a conversation, check if there are previous check-ins using the get_previous_checkins tool.
+            If there are previous entries, reference them naturally (e.g., "Last time we talked, you mentioned being low on energy. How does today compare?").
+            
+            After the check-in conversation, use the save_wellness_checkin tool to persist the data.
+            """,
         )
 
-    # To add tools, use the @function_tool decorator.
-    # Here's an example that adds a simple weather tool.
-    # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
-    #
-    #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-    #
-    #     Args:
-    #         location: The location to look up weather information for (e.g. city name)
-    #     """
-    #
-    #     logger.info(f"Looking up weather for {location}")
-    #
-    #     return "sunny with a temperature of 70 degrees."
+    @function_tool
+    async def get_previous_checkins(self, context: RunContext, limit: int = 3):
+        """Retrieve previous wellness check-ins to reference past conversations.
+        
+        Use this tool at the start of a conversation to personalize the check-in based on previous sessions.
+        
+        Args:
+            limit: Maximum number of previous check-ins to retrieve (default: 3)
+        """
+        logger.info(f"Retrieving last {limit} check-ins")
+        
+        data = load_wellness_log()
+        check_ins = data.get("check_ins", [])
+        
+        if not check_ins:
+            return "No previous check-ins found. This appears to be the first session."
+        
+        # Get the most recent check-ins
+        recent = check_ins[-limit:]
+        recent.reverse()  # Most recent first
+        
+        summary = f"Found {len(recent)} previous check-in(s):\n"
+        for i, entry in enumerate(recent, 1):
+            summary += f"\n{i}. Date: {entry.get('date')}\n"
+            summary += f"   Mood: {entry.get('mood', 'N/A')}\n"
+            summary += f"   Objectives: {', '.join(entry.get('objectives', []))}\n"
+            if entry.get('summary'):
+                summary += f"   Summary: {entry.get('summary')}\n"
+        
+        return summary
+    
+    @function_tool
+    async def save_wellness_checkin(self, context: RunContext, mood: str, objectives: list[str], summary: str = ""):
+        """Save the current wellness check-in data to persistent storage.
+        
+        Call this tool after completing a check-in conversation with the user.
+        
+        Args:
+            mood: User's self-reported mood or energy level (text description)
+            objectives: List of 1-3 intentions or goals the user stated for the day
+            summary: Optional brief summary sentence of the check-in
+        """
+        logger.info(f"Saving check-in: mood={mood}, objectives={objectives}")
+        
+        data = load_wellness_log()
+        
+        # Create new check-in entry
+        entry = {
+            "date": datetime.now().isoformat(),
+            "mood": mood,
+            "objectives": objectives,
+        }
+        
+        if summary:
+            entry["summary"] = summary
+        
+        # Add to check-ins list
+        data["check_ins"].append(entry)
+        
+        # Save to file
+        save_wellness_log(data)
+        
+        return f"Check-in saved successfully! Recorded mood: {mood}, and {len(objectives)} objective(s)."
 
 
 def prewarm(proc: JobProcess):
@@ -65,7 +154,7 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
         # See all available models at https://docs.livekit.io/agents/models/stt/
-        stt=deepgram.STT(model="nova-3"),
+        stt=deepgram.STT(model="nova-2"),
         # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
         # See all available models at https://docs.livekit.io/agents/models/llm/
         llm=google.LLM(
@@ -125,10 +214,10 @@ async def entrypoint(ctx: JobContext):
     await session.start(
         agent=Assistant(),
         room=ctx.room,
-        room_input_options=RoomInputOptions(
-            # For telephony applications, use `BVCTelephony` for best results
-            noise_cancellation=noise_cancellation.BVC(),
-        ),
+        # Disable noise cancellation for local development (requires LiveKit Cloud)
+        # room_input_options=RoomInputOptions(
+        #     noise_cancellation=noise_cancellation.BVC(),
+        # ),
     )
 
     # Join the room and connect to the user
