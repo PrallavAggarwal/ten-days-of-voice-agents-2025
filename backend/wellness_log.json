@@ -1,0 +1,22 @@
+{
+  "check_ins": [
+    {
+      "date": "2025-11-24T01:05:45.051392",
+      "mood": "very high and excited",
+      "objectives": [
+        "complete the AI challenge",
+        "research/outline first steps for SaaS platform"
+      ],
+      "summary": "The user is feeling very high and excited with abundant energy. Objectives for today include completing the AI challenge and beginning to outline steps for a SaaS platform."
+    },
+    {
+      "date": "2025-11-24T01:14:13.418207",
+      "mood": "lower",
+      "objectives": [
+        "5 minutes of gentle stretching or a very short walk",
+        "15-minute focused study session"
+      ],
+      "summary": "The user is feeling lower today with very low energy (1/10). Objectives for today are a 5-minute gentle exercise and a 15-minute focused study session."
+    }
+  ]
+}
